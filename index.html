@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Parking">
+<meta name="theme-color" content="#1f4fa8">
+<title>Curb Check</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;700&family=Inter:wght@400;500;600&display=swap">
+<style>
+/* Layout: one column, phone-first. Street-sign identity: the blue "P" plate is the only ornament. */
+:root{
+  --bg:#eef0f3; --surface:#ffffff; --fg:#16191f; --muted:#5b6472; --line:#d5d9e0;
+  --sign:#1f4fa8; --sign-ink:#ffffff;
+  --yes:#1d8a4e; --no:#c8322b; --maybe:#d99a07; --maybe-ink:#1a1400;
+  --font-display:"Space Grotesk",ui-sans-serif,system-ui,sans-serif;
+  --font-body:"Inter",ui-sans-serif,system-ui,-apple-system,sans-serif;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#0f1216; --surface:#181c22; --fg:#eef1f5; --muted:#9aa4b2; --line:#2a303a;
+  --sign:#3a6fd8; --sign-ink:#ffffff;
+  --yes:#2fae68; --no:#e5524a; --maybe:#f0b429; --maybe-ink:#1a1400;
+  color-scheme:dark;
+}}
+*{box-sizing:border-box}
+html,body{margin:0;min-height:100%}
+body{
+  background:var(--bg); color:var(--fg); font:16px/1.5 var(--font-body);
+  padding-left:max(16px,env(safe-area-inset-left,0px));
+  padding-right:max(16px,env(safe-area-inset-right,0px));
+  padding-block:calc(env(safe-area-inset-top,0px) + 20px) calc(env(safe-area-inset-bottom,0px) + 28px);
+}
+main{max-width:520px;margin:0 auto;display:flex;flex-direction:column;gap:22px}
+header{display:flex;align-items:center;gap:12px}
+.plate{width:44px;height:44px;border-radius:8px;background:var(--sign);color:var(--sign-ink);
+  display:grid;place-items:center;font:700 30px/1 var(--font-display);
+  box-shadow:inset 0 0 0 3px var(--sign),inset 0 0 0 5px var(--sign-ink)}
+h1{margin:0;font:700 24px/1.1 var(--font-display);letter-spacing:-.01em}
+.sub{margin:2px 0 0;color:var(--muted);font-size:13px}
+
+#check{
+  appearance:none;border:0;cursor:pointer;width:100%;padding:26px 20px;border-radius:18px;
+  background:var(--sign);color:var(--sign-ink);font:700 30px/1 var(--font-display);letter-spacing:.06em;
+  box-shadow:0 2px 0 rgba(0,0,0,.18);transition:transform .08s ease,opacity .2s ease;
+}
+#check:active{transform:translateY(1px)}
+#check:focus-visible{outline:3px solid var(--fg);outline-offset:3px}
+#check:disabled{opacity:.55;cursor:default}
+
+#status{margin:-8px 0 0;color:var(--muted);font-size:14px;min-height:21px;font-variant-numeric:tabular-nums;text-align:center}
+
+#result{display:flex;flex-direction:column;gap:14px}
+.verdict{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:18px 20px;border-radius:14px;
+  font:700 40px/1 var(--font-display);letter-spacing:.02em;color:#fff}
+.verdict small{font:500 13px/1.3 var(--font-body);letter-spacing:0;opacity:.9;text-align:right}
+.v-YES{background:var(--yes)} .v-NO{background:var(--no)} .v-TENTATIVE{background:var(--maybe);color:var(--maybe-ink)}
+.photo{width:100%;border-radius:12px;display:block;background:var(--line);aspect-ratio:16/9;object-fit:cover}
+.error{padding:14px 16px;border-radius:12px;background:var(--surface);border:1px solid var(--line)}
+
+details{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px 16px}
+summary{cursor:pointer;font-weight:600}
+label{display:block;font-size:13px;color:var(--muted);margin:10px 0 6px}
+input{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--fg);font:14px/1.3 ui-monospace,Menlo,monospace}
+.row{display:flex;gap:10px;margin-top:10px;flex-wrap:wrap}
+.btn{appearance:none;border:1px solid var(--line);background:var(--bg);color:var(--fg);padding:10px 14px;border-radius:10px;font:600 14px var(--font-body);cursor:pointer}
+.btn.primary{background:var(--sign);border-color:var(--sign);color:var(--sign-ink)}
+.hint{color:var(--muted);font-size:13px;margin:8px 0 0}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <div class="plate" aria-hidden="true">P</div>
+    <div>
+      <h1>Curb Check</h1>
+      <p class="sub">House-side curb · Entrance, Main Door &amp; Street View cameras</p>
+    </div>
+  </header>
+
+  <button id="check" type="button">CHECK</button>
+  <p id="status" role="status" aria-live="polite"></p>
+
+  <section id="result" hidden></section>
+
+  <details id="setup">
+    <summary>Access code</summary>
+    <label for="code">Paste the access code from your Mac</label>
+    <input id="code" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="pk-….pk-….…">
+    <div class="row">
+      <button class="btn primary" id="save" type="button">Save on this phone</button>
+      <button class="btn" id="forget" type="button">Forget code</button>
+    </div>
+    <p class="hint" id="codeState"></p>
+  </details>
+</main>
+
+<script>
+(() => {
+  const NTFY = "https://ntfy.sh";
+  const KEY = "curbcheck-code";
+  const $ = id => document.getElementById(id);
+  const btn = $("check"), statusEl = $("status"), result = $("result");
+  let busy = false;
+
+  // ---- access code: "<request topic>.<reply topic>.<token>", kept only in this browser
+  const valid = c => /^pk-[\w-]{20,}\.pk-[\w-]{20,}\.[\w-]{10,}$/.test(c || "");
+  const load = () => { try { return localStorage.getItem(KEY) || ""; } catch { return ""; } };
+  const store = c => { try { c ? localStorage.setItem(KEY, c) : localStorage.removeItem(KEY); return true; } catch { return false; } };
+  let code = load();
+
+  // First-time setup link: page#<code> saves the code, then removes it from the address bar
+  function takeCodeFromLink() {
+    const fromHash = decodeURIComponent(location.hash.slice(1));
+    if (!valid(fromHash)) return;
+    code = fromHash; store(code);
+    history.replaceState(null, "", location.pathname + location.search);
+    showCodeState();
+  }
+  window.addEventListener("hashchange", takeCodeFromLink);
+
+  function showCodeState() {
+    $("codeState").textContent = valid(code) ? "A code is saved on this phone." : "No code saved yet.";
+    $("setup").open = !valid(code);
+    btn.disabled = !valid(code);
+  }
+  $("save").onclick = () => {
+    const c = $("code").value.trim();
+    if (!valid(c)) { $("codeState").textContent = "That doesn't look like an access code. Copy it again from your Mac."; return; }
+    code = c; $("code").value = "";
+    $("codeState").textContent = store(c) ? "Saved on this phone." : "Saved for now (this browser won't remember it after closing).";
+    btn.disabled = false; $("setup").open = false;
+  };
+  $("forget").onclick = () => { code = ""; store(""); showCodeState(); };
+  showCodeState();
+  takeCodeFromLink();
+
+  // ---- the check
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const rid = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), b => b.toString(16).padStart(2, "0")).join("");
+  const timeOf = s => new Date(s * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+
+  async function poll(topic, id) {
+    const r = await fetch(`${NTFY}/${topic}/json?poll=1&since=5m`, { cache: "no-store" });
+    if (!r.ok) throw new Error("ntfy " + r.status);
+    let latest = null;
+    for (const line of (await r.text()).split("\n")) {
+      if (!line.trim()) continue;
+      let ev, m;
+      try { ev = JSON.parse(line); m = JSON.parse(ev.message || ""); } catch { continue; }
+      if (m && m.id === id) latest = { ...m, photo: ev.attachment && ev.attachment.url };
+    }
+    return latest;
+  }
+
+  function render(m) {
+    result.replaceChildren();
+    if (m.error) {
+      const p = document.createElement("p"); p.className = "error"; p.textContent = m.error;
+      result.append(p);
+    } else {
+      const v = document.createElement("div"); v.className = "verdict v-" + m.verdict;
+      const word = document.createElement("span"); word.textContent = m.verdict;
+      const small = document.createElement("small");
+      small.textContent = (m.camera ? m.camera + " · " : "") + "checked " + timeOf(m.checked || Date.now() / 1000);
+      v.append(word, small); result.append(v);
+      if (m.photo) {
+        const img = document.createElement("img"); img.className = "photo"; img.alt = "Camera photo of the street";
+        img.src = m.photo; result.append(img);
+      }
+    }
+    result.hidden = false;
+  }
+
+  btn.onclick = async () => {
+    if (busy || !valid(code)) return;
+    busy = true; btn.disabled = true; result.hidden = true;
+    const [req, reply, token] = code.split(".");
+    const id = rid(), t0 = Date.now();
+    let seen = false;
+    const tick = setInterval(() => {
+      const s = Math.round((Date.now() - t0) / 1000);
+      statusEl.textContent = (seen ? "Checking the cameras… " : "Reaching your Mac… ") + s + " s";
+    }, 500);
+    try {
+      const r = await fetch(`${NTFY}/${req}`, { method: "POST", body: `${token} web ${id}` });
+      if (!r.ok) throw new Error("send");
+      while (Date.now() - t0 < 150000) {
+        await sleep(3000);
+        let m = null;
+        try { m = await poll(reply, id); } catch { /* network blip: keep trying */ }
+        if (!m) {
+          if (!seen && Date.now() - t0 > 20000) throw new Error("mac");
+          continue;
+        }
+        seen = true;
+        if (m.status === "checking") continue;
+        render(m); statusEl.textContent = ""; return;
+      }
+      throw new Error("slow");
+    } catch (e) {
+      render({ error: e.message === "mac"
+        ? "Your Mac didn't answer. Check that it's on, awake and connected to the internet."
+        : e.message === "slow" ? "The check took too long. Try again in a minute."
+        : "Couldn't reach the relay. Check your phone's internet connection." });
+      statusEl.textContent = "";
+    } finally {
+      clearInterval(tick); busy = false; btn.disabled = !valid(code);
+    }
+  };
+})();
+</script>
+</body>
+</html>
