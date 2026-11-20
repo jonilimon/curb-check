@@ -144,22 +144,44 @@ input{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);ba
   const rid = () => Array.from(crypto.getRandomValues(new Uint8Array(8)), b => b.toString(16).padStart(2, "0")).join("");
   const timeOf = s => new Date(s * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 
-  async function poll(topic, id) {
-    const r = await fetch(`${NTFY}/${topic}/json?poll=1&since=5m`, { cache: "no-store" });
-    if (!r.ok) throw new Error("ntfy " + r.status);
-    // final = the answer (verdict or error); early = photos sent while Claude decides
-    let final = null, early = null, any = false;
-    for (const line of (await r.text()).split("\n")) {
-      if (!line.trim()) continue;
-      let ev, m;
-      try { ev = JSON.parse(line); m = JSON.parse(ev.message || ""); } catch { continue; }
-      if (!m || m.id !== id) continue;
-      any = true;
-      const photo = ev.attachment && ev.attachment.url;
-      if (m.verdict || m.error) final = { ...m, photo };
-      else if (m.photos && photo) early = photo;
-    }
-    return { any, final, early };
+  // Wait for this check's answer. One live connection (ntfy pushes each message the moment
+  // it arrives) instead of asking repeatedly: ntfy.sh allows only 60 requests per 5 minutes
+  // per home connection, shared with the Mac. Falls back to asking every 3 s if needed.
+  function waitForAnswer(topic, id, since, on) {
+    return new Promise((resolve, reject) => {
+      let done = false, es = null, pollTimer = null, seen = false;
+      const finish = (fn, v) => {
+        if (done) return; done = true;
+        if (es) es.close(); clearInterval(pollTimer); clearTimeout(macTimer); clearTimeout(limit);
+        fn(v);
+      };
+      const handle = ev => {
+        let m; try { m = JSON.parse(ev.message || ""); } catch { return; }
+        if (!m || m.id !== id) return;
+        if (!seen) { seen = true; on.seen(); }
+        const photo = ev.attachment && ev.attachment.url;
+        if (m.verdict || m.error) finish(resolve, { ...m, photo });
+        else if (m.photos && photo) on.early(photo);
+      };
+      const startPolling = () => {
+        if (pollTimer || done) return;
+        pollTimer = setInterval(async () => {
+          try {
+            const r = await fetch(`${NTFY}/${topic}/json?poll=1&since=${since}`, { cache: "no-store" });
+            for (const line of (await r.text()).split("\n")) {
+              if (line.trim()) { try { handle(JSON.parse(line)); } catch {} }
+            }
+          } catch { /* network blip: keep trying */ }
+        }, 3000);
+      };
+      try {
+        es = new EventSource(`${NTFY}/${topic}/sse?since=${since}`);
+        es.onmessage = e => { try { handle(JSON.parse(e.data)); } catch {} };
+        es.onerror = startPolling;          // live connection trouble: ask every 3 s as well
+      } catch { startPolling(); }
+      const macTimer = setTimeout(() => { if (!seen) finish(reject, new Error("mac")); }, 25000);
+      const limit = setTimeout(() => finish(reject, new Error("slow")), 150000);
+    });
   }
 
   function showEarly(photo) {
@@ -200,25 +222,21 @@ input{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);ba
         : seen ? "Checking the cameras… " : "Reaching your Mac… ") + s + " s";
     }, 500);
     try {
+      const since = Math.floor(Date.now() / 1000) - 5;
+      // listen first, then ask, so the answer can't slip past
+      const answer = waitForAnswer(reply, id, since, {
+        seen: () => { seen = true; },
+        early: photo => { if (!earlyShown) { earlyShown = true; showEarly(photo); } },
+      });
       const r = await fetch(`${NTFY}/${req}`, { method: "POST", body: `${token} web ${id}` });
+      if (r.status === 429) throw new Error("busy");
       if (!r.ok) throw new Error("send");
-      while (Date.now() - t0 < 150000) {
-        await sleep(1000);
-        let p = null;
-        try { p = await poll(reply, id); } catch { /* network blip: keep trying */ }
-        if (!p || !p.any) {
-          if (!seen && Date.now() - t0 > 20000) throw new Error("mac");
-          continue;
-        }
-        seen = true;
-        if (p.final) { render(p.final); statusEl.textContent = ""; return; }
-        if (p.early && !earlyShown) { earlyShown = true; showEarly(p.early); }
-      }
-      throw new Error("slow");
+      render(await answer); statusEl.textContent = ""; return;
     } catch (e) {
       render({ error: e.message === "mac"
         ? "Your Mac didn't answer. Check that it's on, awake and connected to the internet."
         : e.message === "slow" ? "The check took too long. Try again in a minute."
+        : e.message === "busy" ? "Too many checks in a short time. Wait a minute and try again."
         : "Couldn't reach the relay. Check your phone's internet connection." });
       statusEl.textContent = "";
     } finally {
