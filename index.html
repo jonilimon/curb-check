@@ -147,14 +147,26 @@ input{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);ba
   async function poll(topic, id) {
     const r = await fetch(`${NTFY}/${topic}/json?poll=1&since=5m`, { cache: "no-store" });
     if (!r.ok) throw new Error("ntfy " + r.status);
-    let latest = null;
+    // final = the answer (verdict or error); early = photos sent while Claude decides
+    let final = null, early = null, any = false;
     for (const line of (await r.text()).split("\n")) {
       if (!line.trim()) continue;
       let ev, m;
       try { ev = JSON.parse(line); m = JSON.parse(ev.message || ""); } catch { continue; }
-      if (m && m.id === id) latest = { ...m, photo: ev.attachment && ev.attachment.url };
+      if (!m || m.id !== id) continue;
+      any = true;
+      const photo = ev.attachment && ev.attachment.url;
+      if (m.verdict || m.error) final = { ...m, photo };
+      else if (m.photos && photo) early = photo;
     }
-    return latest;
+    return { any, final, early };
+  }
+
+  function showEarly(photo) {
+    result.replaceChildren();
+    const img = document.createElement("img"); img.className = "photo";
+    img.alt = "Camera photos of the street, just taken"; img.src = photo;
+    result.append(img); result.hidden = false;
   }
 
   function render(m) {
@@ -181,25 +193,26 @@ input{width:100%;padding:12px;border-radius:10px;border:1px solid var(--line);ba
     busy = true; btn.disabled = true; result.hidden = true;
     const [req, reply, token] = code.split(".");
     const id = rid(), t0 = Date.now();
-    let seen = false;
+    let seen = false, earlyShown = false;
     const tick = setInterval(() => {
       const s = Math.round((Date.now() - t0) / 1000);
-      statusEl.textContent = (seen ? "Checking the cameras… " : "Reaching your Mac… ") + s + " s";
+      statusEl.textContent = (earlyShown ? "Photos in, Claude is looking… "
+        : seen ? "Checking the cameras… " : "Reaching your Mac… ") + s + " s";
     }, 500);
     try {
       const r = await fetch(`${NTFY}/${req}`, { method: "POST", body: `${token} web ${id}` });
       if (!r.ok) throw new Error("send");
       while (Date.now() - t0 < 150000) {
-        await sleep(3000);
-        let m = null;
-        try { m = await poll(reply, id); } catch { /* network blip: keep trying */ }
-        if (!m) {
+        await sleep(1000);
+        let p = null;
+        try { p = await poll(reply, id); } catch { /* network blip: keep trying */ }
+        if (!p || !p.any) {
           if (!seen && Date.now() - t0 > 20000) throw new Error("mac");
           continue;
         }
         seen = true;
-        if (m.status === "checking") continue;
-        render(m); statusEl.textContent = ""; return;
+        if (p.final) { render(p.final); statusEl.textContent = ""; return; }
+        if (p.early && !earlyShown) { earlyShown = true; showEarly(p.early); }
       }
       throw new Error("slow");
     } catch (e) {
